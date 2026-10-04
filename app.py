@@ -40,15 +40,31 @@ if uploaded_file:
       else:
         genai.configure(api_key=api_key)
 
-        # Standard supported model
-        model = genai.GenerativeModel("gemini-pro")
+        # Auto-detect supported model for your API key
+        model_name = "gemini-1.5-flash"
+        try:
+          available_models = [
+              m.name
+              for m in genai.list_models()
+              if "generateContent" in m.supported_generation_methods
+          ]
+          # Flash ya Pro jo bhi available ho use chunna
+          flash_models = [m for m in available_models if "flash" in m]
+          if flash_models:
+            model_name = flash_models[0]
+          elif available_models:
+            model_name = available_models[0]
+        except Exception:
+          model_name = "models/gemini-1.5-flash"
+
+        model = genai.GenerativeModel(model_name)
 
         schema_info = (
             f"Columns: {df.columns.tolist()}\nSample Data:\n{df.head(3).to_string()}"
         )
 
         prompt = f"""
-                You are a Python Data Analyst. A pandas DataFrame named 'df' is already loaded.
+                You are an expert Python Data Analyst. A pandas DataFrame named 'df' is already loaded.
                 Dataset Info:
                 {schema_info}
 
@@ -62,7 +78,7 @@ if uploaded_file:
                 - Output ONLY pure python code inside ```python ``` block.
                 """
 
-        with st.spinner("AI Report analyze kar raha hai..."):
+        with st.spinner(f"AI Report analyze kar raha hai..."):
           response = model.generate_content(prompt)
           code = (
               response.text.replace("```python", "").replace("```", "").strip()
