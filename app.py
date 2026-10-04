@@ -40,8 +40,8 @@ if uploaded_file:
       else:
         genai.configure(api_key=api_key)
 
-        # Updated model name
-        model = genai.GenerativeModel("gemini-1.5-flash-latest")
+        # Standard supported model
+        model = genai.GenerativeModel("gemini-pro")
 
         schema_info = (
             f"Columns: {df.columns.tolist()}\nSample Data:\n{df.head(3).to_string()}"
