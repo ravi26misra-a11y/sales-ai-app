@@ -10,7 +10,7 @@ import streamlit as st
 st.set_page_config(
     page_title="Pharma Business - Sales & Follow-Up Portal",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
 # --- SECRETS & GITHUB PERMANENT STORAGE SETUP ---
@@ -30,41 +30,6 @@ def get_github_repo():
     except Exception:
       pass
   return None
-
-
-def load_tasks():
-  # Pehle GitHub se latest file pull karne ki koshish karein
-  repo = get_github_repo()
-  if repo:
-    try:
-      contents = repo.get_contents(DB_FILE)
-      csv_data = contents.decoded_content.decode("utf-8")
-      df_t = pd.read_csv(io.StringIO(csv_data))
-      return clean_tasks_df(df_t)
-    except Exception:
-      pass
-
-  # Fallback to local file if available
-  if os.path.exists(DB_FILE):
-    try:
-      df_t = pd.read_csv(DB_FILE)
-      return clean_tasks_df(df_t)
-    except Exception:
-      pass
-
-  return pd.DataFrame(
-      columns=[
-          "Task_ID",
-          "Date",
-          "Operator",
-          "Customer",
-          "Admin_Instruction",
-          "Status",
-          "Operator_Reason",
-          "Action_Taken",
-          "Reply_Date",
-      ]
-  )
 
 
 def clean_tasks_df(df_t):
@@ -87,15 +52,46 @@ def clean_tasks_df(df_t):
   return df_t
 
 
+def load_tasks():
+  repo = get_github_repo()
+  if repo:
+    try:
+      contents = repo.get_contents(DB_FILE)
+      csv_data = contents.decoded_content.decode("utf-8")
+      df_t = pd.read_csv(io.StringIO(csv_data))
+      return clean_tasks_df(df_t)
+    except Exception:
+      pass
+
+  if os.path.exists(DB_FILE):
+    try:
+      df_t = pd.read_csv(DB_FILE)
+      return clean_tasks_df(df_t)
+    except Exception:
+      pass
+
+  return pd.DataFrame(
+      columns=[
+          "Task_ID",
+          "Date",
+          "Operator",
+          "Customer",
+          "Admin_Instruction",
+          "Status",
+          "Operator_Reason",
+          "Action_Taken",
+          "Reply_Date",
+      ]
+  )
+
+
 def save_tasks(df_tasks):
   csv_buffer = io.StringIO()
   df_tasks.to_csv(csv_buffer, index=False)
   csv_content = csv_buffer.getvalue()
 
-  # Local save
   df_tasks.to_csv(DB_FILE, index=False)
 
-  # GitHub Permanent Push
   repo = get_github_repo()
   if repo:
     try:
@@ -108,9 +104,7 @@ def save_tasks(df_tasks):
             contents.sha,
         )
       except Exception:
-        repo.create_file(
-            DB_FILE, "Initial task actions create", csv_content
-        )
+        repo.create_file(DB_FILE, "Initial task actions create", csv_content)
     except Exception as e:
       st.error(f"GitHub Sync Error: {e}")
 
@@ -180,7 +174,6 @@ def login_screen():
 if not st.session_state["logged_in"]:
   login_screen()
 else:
-  # Sidebar Logout
   st.sidebar.markdown(f"### 👤 Logged in: **{st.session_state['username'].upper()}**")
   st.sidebar.caption(f"Role: {st.session_state['role']}")
   if st.sidebar.button("Logout"):
@@ -262,21 +255,11 @@ else:
           )
 
           if selected_parties:
-            st.write(
-                f"Aapne **{len(selected_parties)}** parties select ki hain:"
-            )
+            st.write(f"**Selected ({len(selected_parties)}) Parties:**")
             preview_subset = target_df[target_df[cust_col].isin(selected_parties)][
                 [cust_col, "Past_Avg", "Recent_Avg", "Past_Total", "Recent_Total"]
-            ]
-            st.dataframe(
-                preview_subset.style.format({
-                    "Past_Avg": "₹{:,.2f}",
-                    "Recent_Avg": "₹{:,.2f}",
-                    "Past_Total": "₹{:,.2f}",
-                    "Recent_Total": "₹{:,.2f}",
-                }),
-                use_container_width=True,
-            )
+            ].copy()
+            st.table(preview_subset)
 
           instruction = st.text_area(
               "3️⃣ Selected sabhi parties ke liye Operator ko Instruction bhejein:",
@@ -324,9 +307,7 @@ else:
                   f"✅ Sabhi {len(selected_parties)} parties ke tasks successfully assign aur permanent save kar diye gaye!"
               )
         else:
-          st.info(
-              "Is filter ke mutabiq koi party nahi mili. 'Sabhi parties dekhna chahte hain' checkbox ko tick karein."
-          )
+          st.info("Is filter ke mutabiq koi party nahi mili.")
       else:
         st.info("Pehle upar se Sales Excel file upload karein.")
 
@@ -334,7 +315,8 @@ else:
       st.subheader("📋 Operator Follow-up Tracker & Responses")
       tasks = load_tasks()
       if len(tasks) > 0:
-        st.dataframe(tasks, use_container_width=True)
+        # st.table is lighter and never crashes on mobile
+        st.table(tasks)
 
         out = io.BytesIO()
         with pd.ExcelWriter(out, engine="openpyxl") as w:
@@ -352,7 +334,7 @@ else:
       st.markdown("---")
       st.subheader("💬 AI Analyst Chat Box (Data Par Sawaal Poochein)")
       query = st.chat_input(
-          "Poochiye: jaise 'Archana ki top 5 parties ka bar chart banao' ya 'Highest drop wali 10 party batao'"
+          "Poochiye: jaise 'Top 5 parties ka bar chart banao'"
       )
 
       if query:
@@ -397,7 +379,7 @@ else:
 
               if "result_df" in local_vars:
                 st.subheader("📋 AI Generated Table")
-                st.dataframe(local_vars["result_df"])
+                st.table(local_vars["result_df"])
 
               if "fig" in local_vars:
                 st.subheader("📈 AI Generated Graph")
@@ -499,15 +481,14 @@ else:
 
       with tab_done:
         if len(completed_tasks) > 0:
-          st.dataframe(
+          st.table(
               completed_tasks[[
                   "Task_ID",
                   "Customer",
                   "Operator_Reason",
                   "Action_Taken",
                   "Reply_Date",
-              ]],
-              use_container_width=True,
+              ]]
           )
         else:
           st.write("Abhi tak koi response submit nahi hua hai.")
