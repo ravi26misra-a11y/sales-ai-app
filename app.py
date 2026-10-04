@@ -20,7 +20,23 @@ DB_FILE = "task_actions.csv"
 def load_tasks():
   if os.path.exists(DB_FILE):
     try:
-      return pd.read_csv(DB_FILE)
+      df_t = pd.read_csv(DB_FILE)
+      # Data type fix taaki text save karte waqt LossySetitemError na aaye
+      text_cols = [
+          "Operator",
+          "Customer",
+          "Admin_Instruction",
+          "Status",
+          "Operator_Reason",
+          "Action_Taken",
+          "Reply_Date",
+      ]
+      for col in text_cols:
+        if col in df_t.columns:
+          df_t[col] = df_t[col].fillna("").astype(str)
+      if "Task_ID" in df_t.columns:
+        df_t["Task_ID"] = pd.to_numeric(df_t["Task_ID"], errors="coerce").fillna(0).astype(int)
+      return df_t
     except Exception:
       pass
   return pd.DataFrame(
@@ -185,7 +201,7 @@ else:
               party_list,
               default=party_list[:3]
               if len(party_list) >= 3
-              else party_list,  # Top parties pre-selected
+              else party_list,
           )
 
           if selected_parties:
@@ -227,15 +243,19 @@ else:
             else:
               df_tasks = load_tasks()
               new_entries = []
-              start_id = len(df_tasks) + 1
+              start_id = (
+                  df_tasks["Task_ID"].max() + 1
+                  if len(df_tasks) > 0 and "Task_ID" in df_tasks.columns
+                  else 1
+              )
 
               for idx, p in enumerate(selected_parties):
                 new_entries.append({
-                    "Task_ID": start_id + idx,
+                    "Task_ID": int(start_id + idx),
                     "Date": datetime.now().strftime("%Y-%m-%d %H:%M"),
-                    "Operator": selected_op,
-                    "Customer": p,
-                    "Admin_Instruction": instruction,
+                    "Operator": str(selected_op),
+                    "Customer": str(p),
+                    "Admin_Instruction": str(instruction),
                     "Status": "PENDING",
                     "Operator_Reason": "",
                     "Action_Taken": "",
@@ -317,7 +337,6 @@ else:
       if len(tasks) > 0:
         st.dataframe(tasks, use_container_width=True)
 
-        # Export tracker
         out = io.BytesIO()
         with pd.ExcelWriter(out, engine="openpyxl") as w:
           tasks.to_excel(w, index=False)
@@ -398,14 +417,22 @@ else:
 
             if submit_btn:
               if reason.strip() and action.strip():
-                tasks.loc[tasks["Task_ID"] == task_id, "Status"] = "REPLIED"
-                tasks.loc[tasks["Task_ID"] == task_id, "Operator_Reason"] = (
-                    reason
+                # Dtype mismatch safe update
+                mask = tasks["Task_ID"] == task_id
+                tasks["Status"] = tasks["Status"].astype(object)
+                tasks["Operator_Reason"] = tasks["Operator_Reason"].astype(
+                    object
                 )
-                tasks.loc[tasks["Task_ID"] == task_id, "Action_Taken"] = action
-                tasks.loc[tasks["Task_ID"] == task_id, "Reply_Date"] = (
-                    datetime.now().strftime("%Y-%m-%d %H:%M")
+                tasks["Action_Taken"] = tasks["Action_Taken"].astype(object)
+                tasks["Reply_Date"] = tasks["Reply_Date"].astype(object)
+
+                tasks.loc[mask, "Status"] = "REPLIED"
+                tasks.loc[mask, "Operator_Reason"] = str(reason)
+                tasks.loc[mask, "Action_Taken"] = str(action)
+                tasks.loc[mask, "Reply_Date"] = datetime.now().strftime(
+                    "%Y-%m-%d %H:%M"
                 )
+
                 save_tasks(tasks)
                 st.success("✅ Response submit ho gaya! Admin ko update dikhegi.")
                 st.rerun()
