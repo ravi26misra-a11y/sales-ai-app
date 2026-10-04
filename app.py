@@ -21,7 +21,6 @@ def load_tasks():
   if os.path.exists(DB_FILE):
     try:
       df_t = pd.read_csv(DB_FILE)
-      # Data type fix taaki text save karte waqt LossySetitemError na aaye
       text_cols = [
           "Operator",
           "Customer",
@@ -35,7 +34,11 @@ def load_tasks():
         if col in df_t.columns:
           df_t[col] = df_t[col].fillna("").astype(str)
       if "Task_ID" in df_t.columns:
-        df_t["Task_ID"] = pd.to_numeric(df_t["Task_ID"], errors="coerce").fillna(0).astype(int)
+        df_t["Task_ID"] = (
+            pd.to_numeric(df_t["Task_ID"], errors="coerce")
+            .fillna(0)
+            .astype(int)
+        )
       return df_t
     except Exception:
       pass
@@ -139,46 +142,49 @@ else:
   if st.session_state["role"] == "ADMIN":
     st.title("👑 Admin Control & Sales Action Portal")
 
-    admin_tab1, admin_tab2 = st.tabs([
-        "📊 Sales Trend & Multi-Party Assign",
-        "📋 Operator Follow-up Status (Responses)",
-    ])
+    uploaded_file = st.file_uploader(
+        "📁 Sales File Upload Karein (.xls / .xlsx)", type=["xls", "xlsx"]
+    )
+    df = None
 
-    with admin_tab1:
-      uploaded_file = st.file_uploader(
-          "📁 Sales File Upload Karein (.xls / .xlsx)", type=["xls", "xlsx"]
+    if uploaded_file:
+      df = pd.read_excel(uploaded_file)
+      op_col = df.columns[0]
+      cust_col = df.columns[1]
+      time_cols = list(df.columns[2:])
+
+      df[op_col] = df[op_col].astype(str).str.replace("\x00", "").str.strip()
+      df[cust_col] = (
+          df[cust_col].astype(str).str.replace("\x00", "").str.strip()
       )
-      if uploaded_file:
-        df = pd.read_excel(uploaded_file)
-        op_col = df.columns[0]
-        cust_col = df.columns[1]
-        time_cols = list(df.columns[2:])
+      for c in time_cols:
+        df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
 
-        df[op_col] = df[op_col].astype(str).str.replace("\x00", "").str.strip()
-        df[cust_col] = (
-            df[cust_col].astype(str).str.replace("\x00", "").str.strip()
-        )
-        for c in time_cols:
-          df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
+      # Trend calculation
+      recent_k = 2 if len(time_cols) >= 6 else 1
+      past_cols = time_cols[:-recent_k]
+      recent_cols = time_cols[-recent_k:]
 
-        # Dynamic Trend calculation
-        recent_k = 2 if len(time_cols) >= 6 else 1
-        past_cols = time_cols[:-recent_k]
-        recent_cols = time_cols[-recent_k:]
+      df["Past_Avg"] = df[past_cols].mean(axis=1)
+      df["Recent_Avg"] = df[recent_cols].mean(axis=1)
+      df["Past_Total"] = df[past_cols].sum(axis=1)
+      df["Recent_Total"] = df[recent_cols].sum(axis=1)
 
-        df["Past_Avg"] = df[past_cols].mean(axis=1)
-        df["Recent_Avg"] = df[recent_cols].mean(axis=1)
-        df["Past_Total"] = df[past_cols].sum(axis=1)
-        df["Recent_Total"] = df[recent_cols].sum(axis=1)
+      admin_tab1, admin_tab2 = st.tabs([
+          "📊 Sales Trend & Multi-Party Assign",
+          "📋 Operator Follow-up Status (Responses)",
+      ])
 
+      with admin_tab1:
         # 1. Operator Filter
         operators_list = sorted(
             [op for op in df[op_col].unique() if op and op != "nan"]
         )
         selected_op = st.selectbox("1️⃣ Operator Select Karein:", operators_list)
 
-        # Operator-wise critical parties
         op_data = df[df[op_col] == selected_op]
+
+        # Critical Filter
         critical_parties = op_data[
             ((op_data["Past_Total"] >= 15000) & (op_data["Recent_Total"] == 0))
             | (
@@ -192,25 +198,30 @@ else:
             " critical hain (Sale gir rahi hai ya ₹0 ho chuki hai)."
         )
 
-        if len(critical_parties) > 0:
-          party_list = critical_parties[cust_col].tolist()
+        show_all = st.checkbox(
+            "Sabhi parties dekhna chahte hain (Sirf critical nahi)?",
+            value=False,
+        )
+        target_df = op_data if show_all else critical_parties
 
-          # 2. Multi-Customer Selection
+        party_list = target_df[cust_col].tolist()
+
+        if len(party_list) > 0:
+          # 2. MULTI CUSTOMER SELECTION
+          default_selection = party_list[:3] if len(party_list) >= 3 else party_list
           selected_parties = st.multiselect(
               "2️⃣ Ek saath ek se zyada Parties select karein (Multi-Select):",
-              party_list,
-              default=party_list[:3]
-              if len(party_list) >= 3
-              else party_list,
+              options=party_list,
+              default=default_selection,
           )
 
           if selected_parties:
             st.write(
                 f"Aapne **{len(selected_parties)}** parties select ki hain:"
             )
-            preview_subset = critical_parties[
-                critical_parties[cust_col].isin(selected_parties)
-            ][[cust_col, "Past_Avg", "Recent_Avg", "Past_Total", "Recent_Total"]]
+            preview_subset = target_df[target_df[cust_col].isin(selected_parties)][
+                [cust_col, "Past_Avg", "Recent_Avg", "Past_Total", "Recent_Total"]
+            ]
             st.dataframe(
                 preview_subset.style.format({
                     "Past_Avg": "₹{:,.2f}",
@@ -221,21 +232,19 @@ else:
                 use_container_width=True,
             )
 
-          # 3. Instruction box
+          # 3. Instruction Box
           instruction = st.text_area(
-              "3️⃣ Selected sabhi parties ke liye Operator ko Instruction"
-              " bhejein:",
+              "3️⃣ Selected sabhi parties ke liye Operator ko Instruction bhejein:",
               value=(
-                  "In parties ka sale record pehle achha tha par ab giraavat"
-                  " aayi hai / band ho gaya hai. Kripya party se turant baat"
-                  " karein, reason pata karein aur sale revive karne ke liye"
-                  " action report submit karein."
+                  "In parties ka sale record pehle achha tha par ab giraavat aayi"
+                  " hai / band ho gaya hai. Kripya party se turant baat karein,"
+                  " reason pata karein aur sale revive karne ke liye action"
+                  " report submit karein."
               ),
           )
 
           if st.button(
-              f"🚀 Send Task for All {len(selected_parties)} Selected Parties to"
-              f" {selected_op}",
+              f"🚀 Send Task for All Selected ({len(selected_parties)}) Parties to {selected_op}",
               type="primary",
           ):
             if len(selected_parties) == 0:
@@ -244,7 +253,7 @@ else:
               df_tasks = load_tasks()
               new_entries = []
               start_id = (
-                  df_tasks["Task_ID"].max() + 1
+                  int(df_tasks["Task_ID"].max()) + 1
                   if len(df_tasks) > 0 and "Task_ID" in df_tasks.columns
                   else 1
               )
@@ -267,86 +276,86 @@ else:
               )
               save_tasks(df_tasks)
               st.success(
-                  f"✅ Sabhi {len(selected_parties)} parties ke task successfully"
-                  f" {selected_op} ko assign kar diye gaye!"
+                  f"✅ Sabhi {len(selected_parties)} parties ke tasks successfully {selected_op} ko assign kar diye gaye!"
               )
         else:
-          st.success("Is operator ke under sabhi parties ka record healthy hai!")
+          st.info(
+              "Is filter ke mutabiq koi party nahi mili. 'Sabhi parties dekhna chahte hain' checkbox ko tick karein."
+          )
 
-        st.markdown("---")
-        # --- AI NATURAL QUERY CHAT BOX ---
-        st.subheader("💬 AI Analyst Chat Box (Data Par Sawaal Poochein)")
-        query = st.chat_input(
-            "Poochiye: jaise 'Archana ki top 5 parties ka bar chart banao' ya"
-            " 'Highest drop wali 10 party batao'"
-        )
+      with admin_tab2:
+        st.subheader("📋 Operator Follow-up Tracker & Responses")
+        tasks = load_tasks()
+        if len(tasks) > 0:
+          st.dataframe(tasks, use_container_width=True)
 
-        if query:
-          if not api_key:
-            st.error("Kripya Streamlit Secrets mein GEMINI_API_KEY set karein!")
-          else:
-            genai.configure(api_key=api_key)
-            model = genai.GenerativeModel("models/gemini-3.8-flash")
+          out = io.BytesIO()
+          with pd.ExcelWriter(out, engine="openpyxl") as w:
+            tasks.to_excel(w, index=False)
+          st.download_button(
+              "📥 Download Action Tracker Excel",
+              out.getvalue(),
+              "sales_actions.xlsx",
+          )
+        else:
+          st.info("Abhi tak koi task assign nahi hua hai.")
 
-            schema_info = (
-                f"Columns: {df.columns.tolist()}\nFirst col: Follow Up By\nSecond"
-                f" col: Customer\nRemaining: Sales periods\nSample"
-                f" Data:\n{df.head(3).to_string()}"
-            )
+      # --- ALWAYS VISIBLE AI CHAT BOX AT BOTTOM ---
+      st.markdown("---")
+      st.subheader("💬 AI Analyst Chat Box (Data Par Sawaal Poochein)")
+      query = st.chat_input(
+          "Poochiye: jaise 'Archana ki top 5 parties ka bar chart banao' ya 'Highest drop wali 10 party batao'"
+      )
 
-            prompt = f"""
-                        You are a Senior Pharma Sales Data Analyst. A pandas DataFrame named 'df' is loaded.
-                        Dataset Info:
-                        {schema_info}
+      if query:
+        if not api_key:
+          st.error("Kripya Streamlit Secrets mein GEMINI_API_KEY set karein!")
+        else:
+          genai.configure(api_key=api_key)
+          model = genai.GenerativeModel("models/gemini-3.8-flash")
 
-                        User Query: {query}
+          schema_info = (
+              f"Columns: {df.columns.tolist()}\nFirst col: Follow Up By\nSecond"
+              f" col: Customer\nRemaining: Sales periods\nSample"
+              f" Data:\n{df.head(3).to_string()}"
+          )
 
-                        Write Python code using pandas and matplotlib to answer the request.
-                        Rules:
-                        - Do NOT reload dataset. Use existing 'df'.
-                        - If table/report is needed, save to variable 'result_df'.
-                        - If chart is needed, plot using matplotlib and assign the figure to variable 'fig'. Set large bold labels for mobile visibility.
-                        - Output ONLY pure python code inside ```python ``` block.
-                        """
+          prompt = f"""
+                    You are a Senior Pharma Sales Data Analyst. A pandas DataFrame named 'df' is loaded.
+                    Dataset Info:
+                    {schema_info}
 
-            with st.spinner("AI Analysis kar raha hai..."):
-              try:
-                response = model.generate_content(prompt)
-                code = (
-                    response.text.replace("```python", "")
-                    .replace("```", "")
-                    .strip()
-                )
+                    User Query: {query}
 
-                local_vars = {"df": df, "plt": plt, "pd": pd, "np": np}
-                exec(code, {}, local_vars)
+                    Write Python code using pandas and matplotlib to answer the request.
+                    Rules:
+                    - Do NOT reload dataset. Use existing 'df'.
+                    - If table/report is needed, save to variable 'result_df'.
+                    - If chart is needed, plot using matplotlib and assign the figure to variable 'fig'. Set large bold labels for mobile visibility.
+                    - Output ONLY pure python code inside ```python ``` block.
+                    """
 
-                if "result_df" in local_vars:
-                  st.subheader("📋 AI Generated Table")
-                  st.dataframe(local_vars["result_df"])
+          with st.spinner("AI Analysis kar raha hai..."):
+            try:
+              response = model.generate_content(prompt)
+              code = (
+                  response.text.replace("```python", "")
+                  .replace("```", "")
+                  .strip()
+              )
 
-                if "fig" in local_vars:
-                  st.subheader("📈 AI Generated Graph")
-                  st.pyplot(local_vars["fig"])
-              except Exception as e:
-                st.error(f"Chat analysis error: {e}")
+              local_vars = {"df": df, "plt": plt, "pd": pd, "np": np}
+              exec(code, {}, local_vars)
 
-    with admin_tab2:
-      st.subheader("📋 Operator Follow-up Tracker & Responses")
-      tasks = load_tasks()
-      if len(tasks) > 0:
-        st.dataframe(tasks, use_container_width=True)
+              if "result_df" in local_vars:
+                st.subheader("📋 AI Generated Table")
+                st.dataframe(local_vars["result_df"])
 
-        out = io.BytesIO()
-        with pd.ExcelWriter(out, engine="openpyxl") as w:
-          tasks.to_excel(w, index=False)
-        st.download_button(
-            "📥 Download Action Tracker Excel",
-            out.getvalue(),
-            "sales_actions.xlsx",
-        )
-      else:
-        st.info("Abhi tak koi task assign nahi hua hai.")
+              if "fig" in local_vars:
+                st.subheader("📈 AI Generated Graph")
+                st.pyplot(local_vars["fig"])
+            except Exception as e:
+              st.error(f"Chat analysis error: {e}")
 
   # =========================================================================
   # 👷 OPERATOR PANEL
@@ -417,7 +426,6 @@ else:
 
             if submit_btn:
               if reason.strip() and action.strip():
-                # Dtype mismatch safe update
                 mask = tasks["Task_ID"] == task_id
                 tasks["Status"] = tasks["Status"].astype(object)
                 tasks["Operator_Reason"] = tasks["Operator_Reason"].astype(
