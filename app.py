@@ -1,6 +1,6 @@
-from datetime import datetime
 import io
 import os
+from datetime import datetime
 import google.generativeai as genai
 import matplotlib.pyplot as plt
 import numpy as np
@@ -110,8 +110,9 @@ def save_tasks(df_tasks):
 
 
 # --- USER AUTHENTICATION / LOGIN ---
+# Admin password set to 2619
 USERS = {
-    "admin": {"password": "123", "role": "ADMIN", "name": "Admin"},
+    "admin": {"password": "2619", "role": "ADMIN", "name": "Admin"},
     "archana": {
         "password": "123",
         "role": "OPERATOR",
@@ -215,10 +216,11 @@ else:
         past_cols = time_cols[:-recent_k]
         recent_cols = time_cols[-recent_k:]
 
-        df["Past_Avg"] = df[past_cols].mean(axis=1)
-        df["Recent_Avg"] = df[recent_cols].mean(axis=1)
-        df["Past_Total"] = df[past_cols].sum(axis=1)
-        df["Recent_Total"] = df[recent_cols].sum(axis=1)
+        # Rounding off figures to nearest whole number (No decimals)
+        df["Past_Avg"] = df[past_cols].mean(axis=1).round(0).astype(int)
+        df["Recent_Avg"] = df[recent_cols].mean(axis=1).round(0).astype(int)
+        df["Past_Total"] = df[past_cols].sum(axis=1).round(0).astype(int)
+        df["Recent_Total"] = df[recent_cols].sum(axis=1).round(0).astype(int)
 
         operators_list = sorted(
             [op for op in df[op_col].unique() if op and op != "nan"]
@@ -247,7 +249,9 @@ else:
         party_list = target_df[cust_col].tolist()
 
         if len(party_list) > 0:
-          default_selection = party_list[:3] if len(party_list) >= 3 else party_list
+          default_selection = (
+              party_list[:3] if len(party_list) >= 3 else party_list
+          )
           selected_parties = st.multiselect(
               "2️⃣ Ek saath ek se zyada Parties select karein (Multi-Select):",
               options=party_list,
@@ -256,10 +260,32 @@ else:
 
           if selected_parties:
             st.write(f"**Selected ({len(selected_parties)}) Parties:**")
-            preview_subset = target_df[target_df[cust_col].isin(selected_parties)][
-                [cust_col, "Past_Avg", "Recent_Avg", "Past_Total", "Recent_Total"]
-            ].copy()
-            st.table(preview_subset)
+            preview_subset = target_df[
+                target_df[cust_col].isin(selected_parties)
+            ][[
+                cust_col,
+                "Past_Avg",
+                "Recent_Avg",
+                "Past_Total",
+                "Recent_Total",
+            ]].copy()
+
+            # Renaming and integer formatting (no decimals)
+            preview_subset.columns = [
+                "Customer Name",
+                "Past Avg Sale (₹)",
+                "Recent Avg Sale (₹)",
+                "Past Total Sale (₹)",
+                "Recent Total Sale (₹)",
+            ]
+            st.table(
+                preview_subset.style.format({
+                    "Past Avg Sale (₹)": "₹{:,.0f}",
+                    "Recent Avg Sale (₹)": "₹{:,.0f}",
+                    "Past Total Sale (₹)": "₹{:,.0f}",
+                    "Recent Total Sale (₹)": "₹{:,.0f}",
+                })
+            )
 
           instruction = st.text_area(
               "3️⃣ Selected sabhi parties ke liye Operator ko Instruction bhejein:",
@@ -272,7 +298,8 @@ else:
           )
 
           if st.button(
-              f"🚀 Send Task for All Selected ({len(selected_parties)}) Parties to {selected_op}",
+              f"🚀 Send Task for All Selected ({len(selected_parties)}) Parties to"
+              f" {selected_op}",
               type="primary",
           ):
             if len(selected_parties) == 0:
@@ -315,7 +342,6 @@ else:
       st.subheader("📋 Operator Follow-up Tracker & Responses")
       tasks = load_tasks()
       if len(tasks) > 0:
-        # st.table is lighter and never crashes on mobile
         st.table(tasks)
 
         out = io.BytesIO()
@@ -333,9 +359,7 @@ else:
     if df is not None:
       st.markdown("---")
       st.subheader("💬 AI Analyst Chat Box (Data Par Sawaal Poochein)")
-      query = st.chat_input(
-          "Poochiye: jaise 'Top 5 parties ka bar chart banao'"
-      )
+      query = st.chat_input("Poochiye: jaise 'Top 5 parties ka bar chart banao'")
 
       if query:
         if not api_key:
@@ -362,6 +386,7 @@ else:
                     - Do NOT reload dataset. Use existing 'df'.
                     - If table/report is needed, save to variable 'result_df'.
                     - If chart is needed, plot using matplotlib and assign the figure to variable 'fig'. Set large bold labels for mobile visibility.
+                    - Round all currency and sales figures to nearest integer (no decimal points).
                     - Output ONLY pure python code inside ```python ``` block.
                     """
 
