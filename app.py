@@ -19,34 +19,35 @@ DB_FILE = "task_actions.csv"
 
 def load_tasks():
   if os.path.exists(DB_FILE):
-    return pd.read_csv(DB_FILE)
-  else:
-    return pd.DataFrame(
-        columns=[
-            "Task_ID",
-            "Date",
-            "Operator",
-            "Customer",
-            "Admin_Instruction",
-            "Status",
-            "Operator_Reason",
-            "Action_Taken",
-            "Reply_Date",
-        ]
-    )
+    try:
+      return pd.read_csv(DB_FILE)
+    except Exception:
+      pass
+  return pd.DataFrame(
+      columns=[
+          "Task_ID",
+          "Date",
+          "Operator",
+          "Customer",
+          "Admin_Instruction",
+          "Status",
+          "Operator_Reason",
+          "Action_Taken",
+          "Reply_Date",
+      ]
+  )
 
 
 def save_tasks(df_tasks):
   df_tasks.to_csv(DB_FILE, index=False)
 
 
+# Secrets se API Key lena
+api_key = st.secrets.get("GEMINI_API_KEY", "")
+
 # --- USER AUTHENTICATION / LOGIN ---
 USERS = {
-    "admin": {
-        "password": "123",
-        "role": "ADMIN",
-        "name": "Admin",
-    },  # Aap password badal sakte hain
+    "admin": {"password": "123", "role": "ADMIN", "name": "Admin"},
     "archana": {
         "password": "123",
         "role": "OPERATOR",
@@ -86,10 +87,9 @@ if "logged_in" not in st.session_state:
   st.session_state["operator_name"] = ""
 
 
-# Login Function
 def login_screen():
   st.title("🔐 Pharma Portal Login")
-  st.caption("Sales Monitoring & Action Tracking System")
+  st.caption("Sales Monitoring, Team Follow-Up & AI Analytics")
 
   c1, c2, c3 = st.columns([1, 2, 1])
   with c2:
@@ -111,7 +111,7 @@ if not st.session_state["logged_in"]:
   login_screen()
 else:
   # Sidebar Logout
-  st.sidebar.markdown(f"### 👤 Logged in as: **{st.session_state['username'].upper()}**")
+  st.sidebar.markdown(f"### 👤 Logged in: **{st.session_state['username'].upper()}**")
   st.sidebar.caption(f"Role: {st.session_state['role']}")
   if st.sidebar.button("Logout"):
     st.session_state["logged_in"] = False
@@ -124,7 +124,7 @@ else:
     st.title("👑 Admin Control & Sales Action Portal")
 
     admin_tab1, admin_tab2 = st.tabs([
-        "📊 Sales Trend & Assign Tasks",
+        "📊 Sales Trend & Multi-Party Assign",
         "📋 Operator Follow-up Status (Responses)",
     ])
 
@@ -155,7 +155,7 @@ else:
         df["Past_Total"] = df[past_cols].sum(axis=1)
         df["Recent_Total"] = df[recent_cols].sum(axis=1)
 
-        # Filter Operator
+        # 1. Operator Filter
         operators_list = sorted(
             [op for op in df[op_col].unique() if op and op != "nan"]
         )
@@ -172,56 +172,144 @@ else:
         ].copy()
 
         st.warning(
-            f"⚠️ **{selected_op}** ke under total **{len(critical_parties)}**"
-            " parties ka sale gira ya zero ho gaya hai."
+            f"⚠️ **{selected_op}** ke under **{len(critical_parties)}** parties"
+            " critical hain (Sale gir rahi hai ya ₹0 ho chuki hai)."
         )
 
-        # Select Party to take action
         if len(critical_parties) > 0:
           party_list = critical_parties[cust_col].tolist()
-          selected_party = st.selectbox(
-              "2️⃣ Kis Party ke baare mein inquiry karni hai?", party_list
+
+          # 2. Multi-Customer Selection
+          selected_parties = st.multiselect(
+              "2️⃣ Ek saath ek se zyada Parties select karein (Multi-Select):",
+              party_list,
+              default=party_list[:3]
+              if len(party_list) >= 3
+              else party_list,  # Top parties pre-selected
           )
 
-          party_info = critical_parties[
-              critical_parties[cust_col] == selected_party
-          ].iloc[0]
-          c1, c2 = st.columns(2)
-          c1.metric("Pichhla Record", f"₹{party_info['Past_Avg']:,.2f} /period")
-          c2.metric("Current Status", f"₹{party_info['Recent_Avg']:,.2f}")
+          if selected_parties:
+            st.write(
+                f"Aapne **{len(selected_parties)}** parties select ki hain:"
+            )
+            preview_subset = critical_parties[
+                critical_parties[cust_col].isin(selected_parties)
+            ][[cust_col, "Past_Avg", "Recent_Avg", "Past_Total", "Recent_Total"]]
+            st.dataframe(
+                preview_subset.style.format({
+                    "Past_Avg": "₹{:,.2f}",
+                    "Recent_Avg": "₹{:,.2f}",
+                    "Past_Total": "₹{:,.2f}",
+                    "Recent_Total": "₹{:,.2f}",
+                }),
+                use_container_width=True,
+            )
 
-          # Action instruction form
+          # 3. Instruction box
           instruction = st.text_area(
-              "3️⃣ Operator ke liye Hidayat / Instruction:",
+              "3️⃣ Selected sabhi parties ke liye Operator ko Instruction"
+              " bhejein:",
               value=(
-                  f"Please check why sale dropped for {selected_party}. Contact"
-                  " party immediately and report reason and revival action."
+                  "In parties ka sale record pehle achha tha par ab giraavat"
+                  " aayi hai / band ho gaya hai. Kripya party se turant baat"
+                  " karein, reason pata karein aur sale revive karne ke liye"
+                  " action report submit karein."
               ),
           )
 
-          if st.button("🚀 Send Instruction to Operator", type="primary"):
-            df_tasks = load_tasks()
-            new_task = {
-                "Task_ID": len(df_tasks) + 1,
-                "Date": datetime.now().strftime("%Y-%m-%d %H:%M"),
-                "Operator": selected_op,
-                "Customer": selected_party,
-                "Admin_Instruction": instruction,
-                "Status": "PENDING",
-                "Operator_Reason": "",
-                "Action_Taken": "",
-                "Reply_Date": "",
-            }
-            df_tasks = pd.concat(
-                [df_tasks, pd.DataFrame([new_task])], ignore_index=True
-            )
-            save_tasks(df_tasks)
-            st.success(
-                f"✅ Instruction successfully bhej di gayi: {selected_op} ko"
-                f" {selected_party} ke liye!"
-            )
+          if st.button(
+              f"🚀 Send Task for All {len(selected_parties)} Selected Parties to"
+              f" {selected_op}",
+              type="primary",
+          ):
+            if len(selected_parties) == 0:
+              st.error("Kripya kam se kam ek party select karein!")
+            else:
+              df_tasks = load_tasks()
+              new_entries = []
+              start_id = len(df_tasks) + 1
+
+              for idx, p in enumerate(selected_parties):
+                new_entries.append({
+                    "Task_ID": start_id + idx,
+                    "Date": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                    "Operator": selected_op,
+                    "Customer": p,
+                    "Admin_Instruction": instruction,
+                    "Status": "PENDING",
+                    "Operator_Reason": "",
+                    "Action_Taken": "",
+                    "Reply_Date": "",
+                })
+
+              df_tasks = pd.concat(
+                  [df_tasks, pd.DataFrame(new_entries)], ignore_index=True
+              )
+              save_tasks(df_tasks)
+              st.success(
+                  f"✅ Sabhi {len(selected_parties)} parties ke task successfully"
+                  f" {selected_op} ko assign kar diye gaye!"
+              )
         else:
-          st.success("Is operator ke under sabhi parties ka trend achha hai!")
+          st.success("Is operator ke under sabhi parties ka record healthy hai!")
+
+        st.markdown("---")
+        # --- AI NATURAL QUERY CHAT BOX ---
+        st.subheader("💬 AI Analyst Chat Box (Data Par Sawaal Poochein)")
+        query = st.chat_input(
+            "Poochiye: jaise 'Archana ki top 5 parties ka bar chart banao' ya"
+            " 'Highest drop wali 10 party batao'"
+        )
+
+        if query:
+          if not api_key:
+            st.error("Kripya Streamlit Secrets mein GEMINI_API_KEY set karein!")
+          else:
+            genai.configure(api_key=api_key)
+            model = genai.GenerativeModel("models/gemini-3.8-flash")
+
+            schema_info = (
+                f"Columns: {df.columns.tolist()}\nFirst col: Follow Up By\nSecond"
+                f" col: Customer\nRemaining: Sales periods\nSample"
+                f" Data:\n{df.head(3).to_string()}"
+            )
+
+            prompt = f"""
+                        You are a Senior Pharma Sales Data Analyst. A pandas DataFrame named 'df' is loaded.
+                        Dataset Info:
+                        {schema_info}
+
+                        User Query: {query}
+
+                        Write Python code using pandas and matplotlib to answer the request.
+                        Rules:
+                        - Do NOT reload dataset. Use existing 'df'.
+                        - If table/report is needed, save to variable 'result_df'.
+                        - If chart is needed, plot using matplotlib and assign the figure to variable 'fig'. Set large bold labels for mobile visibility.
+                        - Output ONLY pure python code inside ```python ``` block.
+                        """
+
+            with st.spinner("AI Analysis kar raha hai..."):
+              try:
+                response = model.generate_content(prompt)
+                code = (
+                    response.text.replace("```python", "")
+                    .replace("```", "")
+                    .strip()
+                )
+
+                local_vars = {"df": df, "plt": plt, "pd": pd, "np": np}
+                exec(code, {}, local_vars)
+
+                if "result_df" in local_vars:
+                  st.subheader("📋 AI Generated Table")
+                  st.dataframe(local_vars["result_df"])
+
+                if "fig" in local_vars:
+                  st.subheader("📈 AI Generated Graph")
+                  st.pyplot(local_vars["fig"])
+              except Exception as e:
+                st.error(f"Chat analysis error: {e}")
 
     with admin_tab2:
       st.subheader("📋 Operator Follow-up Tracker & Responses")
@@ -229,15 +317,17 @@ else:
       if len(tasks) > 0:
         st.dataframe(tasks, use_container_width=True)
 
-        # Export report
+        # Export tracker
         out = io.BytesIO()
         with pd.ExcelWriter(out, engine="openpyxl") as w:
           tasks.to_excel(w, index=False)
         st.download_button(
-            "📥 Download Action Tracker Excel", out.getvalue(), "sales_actions.xlsx"
+            "📥 Download Action Tracker Excel",
+            out.getvalue(),
+            "sales_actions.xlsx",
         )
       else:
-        st.info("Abhi tak koi task assign nahi kiya gaya hai.")
+        st.info("Abhi tak koi task assign nahi hua hai.")
 
   # =========================================================================
   # 👷 OPERATOR PANEL
@@ -248,8 +338,11 @@ else:
     st.info(f"Assigned Profile: **{op_name}**")
 
     tasks = load_tasks()
-    # Operator ke apne tasks filter karna
-    my_tasks = tasks[tasks["Operator"] == op_name].copy()
+    my_tasks = (
+        tasks[tasks["Operator"] == op_name].copy()
+        if len(tasks) > 0
+        else pd.DataFrame()
+    )
 
     if len(my_tasks) == 0:
       st.success("🎉 Shabaash! Aapke liye abhi koi pending inquiry nahi hai.")
@@ -271,15 +364,18 @@ else:
           selected_task_label = st.selectbox(
               "Select Party to Submit Report:", task_options
           )
-          task_id = int(selected_task_label.split(" - ")[0].replace("Task #", ""))
+          task_id = int(
+              selected_task_label.split(" - ")[0].replace("Task #", "")
+          )
           current_task = pending_tasks[
               pending_tasks["Task_ID"] == task_id
           ].iloc[0]
 
-          st.error(f"📌 **Admin Instruction:** {current_task['Admin_Instruction']}")
+          st.error(
+              f"📌 **Admin Instruction:** {current_task['Admin_Instruction']}"
+          )
           st.caption(f"Assigned Date: {current_task['Date']}")
 
-          # Operator response form
           with st.form("operator_response_form"):
             reason = st.text_area(
                 "1. Sale Kam Hone / Band Hone Ka Reason (Party Se Baat Karke):",
@@ -311,10 +407,7 @@ else:
                     datetime.now().strftime("%Y-%m-%d %H:%M")
                 )
                 save_tasks(tasks)
-                st.success(
-                    "✅ Response submit ho gaya! Admin ko notification update"
-                    " dikhegi."
-                )
+                st.success("✅ Response submit ho gaya! Admin ko update dikhegi.")
                 st.rerun()
               else:
                 st.warning("Kripya Reason aur Action dono fields bharein!")
