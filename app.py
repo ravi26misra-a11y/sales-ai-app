@@ -191,9 +191,10 @@ else:
     )
     df = None
 
-    admin_tab1, admin_tab2 = st.tabs([
+    admin_tab1, admin_tab2, admin_tab3 = st.tabs([
         "📊 Sales Trend & Multi-Party Assign",
         "📋 Operator Follow-up Status (Responses)",
+        "🗑️ Clear Old Assignments",
     ])
 
     with admin_tab1:
@@ -210,7 +211,6 @@ else:
         for c in time_cols:
           df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
 
-        # Dynamic Trend calculation
         recent_k = 2 if len(time_cols) >= 6 else 1
         past_cols = time_cols[:-recent_k]
         recent_cols = time_cols[-recent_k:]
@@ -235,7 +235,7 @@ else:
         ].copy()
 
         st.warning(
-            f"⚠️️ **{selected_op}** ke under **{len(critical_parties)}** parties"
+            f"⚠️ **{selected_op}** ke under **{len(critical_parties)}** parties"
             " critical hain (Sale gir rahi hai ya ₹0 ho chuki hai)."
         )
 
@@ -254,7 +254,6 @@ else:
 
         target_df = op_data.copy() if show_all else critical_parties.copy()
 
-        # Already assigned parties ko hatana
         existing_tasks = load_tasks()
         if exclude_assigned and len(existing_tasks) > 0:
           assigned_names = existing_tasks["Customer"].str.strip().unique()
@@ -349,7 +348,7 @@ else:
               st.rerun()
         else:
           st.info(
-              "Is filter ke mutabiq koi nayi party nahi bachi (Sabhi parties pehle se assign ho chuki hain ya koi critical party nahi hai)."
+              "Is filter ke mutabiq koi nayi party nahi bachi (Sabhi pehle se assign hain)."
           )
       else:
         st.info("Pehle upar se Sales Excel file upload karein.")
@@ -359,8 +358,7 @@ else:
       tasks = load_tasks()
 
       if len(tasks) > 0:
-        # --- DROPDOWN FILTERS FOR EVERY HEADING ---
-        st.markdown("##### 🔍 Field-wise Filters (Apni Marzi Se Filter Karein):")
+        st.markdown("##### 🔍 Field-wise Filters:")
         f_col1, f_col2, f_col3 = st.columns(3)
 
         with f_col1:
@@ -387,7 +385,6 @@ else:
             placeholder="Type party name...",
         ).strip()
 
-        # Apply Filters
         filtered_tasks = tasks.copy()
         if chosen_op != "ALL OPERATORS":
           filtered_tasks = filtered_tasks[filtered_tasks["Operator"] == chosen_op]
@@ -417,6 +414,67 @@ else:
         )
       else:
         st.info("Abhi tak koi task assign nahi hua hai.")
+
+    # =========================================================================
+    # 🗑️ TAB 3: CLEAR OLD ASSIGNMENTS (OPERATOR WISE)
+    # =========================================================================
+    with admin_tab3:
+      st.subheader("🗑️ Clear Old Assignments (Cleanup / Reset)")
+      st.caption("Pichhle tasks ko delete karke list ko clean karein taaki wo parties dobara fresh follow-up ke liye available ho sakein.")
+
+      tasks = load_tasks()
+
+      if len(tasks) > 0:
+        c_op, c_status = st.columns(2)
+        with c_op:
+          clear_ops_list = ["ALL OPERATORS"] + sorted(
+              [op for op in tasks["Operator"].unique() if str(op).strip()]
+          )
+          clear_chosen_op = st.selectbox(
+              "Kis Operator ke assignments clear karne hain?",
+              clear_ops_list,
+              key="clear_op_select",
+          )
+
+        with c_status:
+          clear_type = st.radio(
+              "Kaunse tasks hatane hain?",
+              [
+                  "✅ Sirf COMPLETED (Jinka Operator ne reply de diya hai)",
+                  "🚨 ALL (Pending + Replied dono delete karein)",
+              ],
+          )
+
+        # Target records count
+        to_delete_mask = pd.Series([True] * len(tasks), index=tasks.index)
+        if clear_chosen_op != "ALL OPERATORS":
+          to_delete_mask = to_delete_mask & (tasks["Operator"] == clear_chosen_op)
+
+        if "Sirf COMPLETED" in clear_type:
+          to_delete_mask = to_delete_mask & (tasks["Status"] == "REPLIED")
+
+        delete_count = to_delete_mask.sum()
+
+        st.warning(
+            f"⚠️️ **{delete_count}** tasks match ho rahe hain jo delete honge."
+        )
+
+        confirm_del = st.checkbox("Haan, main in tasks ko delete karna chahta hoon.")
+
+        if st.button("🗑️ Permanently Delete Selected Tasks", type="primary"):
+          if not confirm_del:
+            st.error("Kripya pehle checkbox par tick karke confirm karein!")
+          elif delete_count == 0:
+            st.info("Delete karne ke liye koi task match nahi hua.")
+          else:
+            remaining_tasks = tasks[~to_delete_mask].copy()
+            save_tasks(remaining_tasks)
+            st.success(
+                f"✅ {delete_count} tasks successfully delete ho gaye aur GitHub par update ho gaya!"
+            )
+            st.rerun()
+      else:
+        st.info("Abhi database mein koi assignments nahi hain.")
 
     # --- AI CHAT QUERY AT BOTTOM ---
     if df is not None:
