@@ -110,7 +110,6 @@ def save_tasks(df_tasks):
 
 
 # --- USER AUTHENTICATION / LOGIN ---
-# Admin password set to 2619
 USERS = {
     "admin": {"password": "2619", "role": "ADMIN", "name": "Admin"},
     "archana": {
@@ -216,7 +215,6 @@ else:
         past_cols = time_cols[:-recent_k]
         recent_cols = time_cols[-recent_k:]
 
-        # Rounding off figures to nearest whole number (No decimals)
         df["Past_Avg"] = df[past_cols].mean(axis=1).round(0).astype(int)
         df["Recent_Avg"] = df[recent_cols].mean(axis=1).round(0).astype(int)
         df["Past_Total"] = df[past_cols].sum(axis=1).round(0).astype(int)
@@ -237,15 +235,31 @@ else:
         ].copy()
 
         st.warning(
-            f"⚠️ **{selected_op}** ke under **{len(critical_parties)}** parties"
+            f"⚠️️ **{selected_op}** ke under **{len(critical_parties)}** parties"
             " critical hain (Sale gir rahi hai ya ₹0 ho chuki hai)."
         )
 
-        show_all = st.checkbox(
-            "Sabhi parties dekhna chahte hain (Sirf critical nahi)?",
-            value=False,
-        )
-        target_df = op_data if show_all else critical_parties
+        col_opt1, col_opt2 = st.columns(2)
+        with col_opt1:
+          exclude_assigned = st.checkbox(
+              "🚫 Pehle se assign ki hui parties list se hatayein (Exclude"
+              " Assigned)",
+              value=True,
+          )
+        with col_opt2:
+          show_all = st.checkbox(
+              "Sabhi parties dekhna chahte hain (Sirf critical nahi)?",
+              value=False,
+          )
+
+        target_df = op_data.copy() if show_all else critical_parties.copy()
+
+        # Already assigned parties ko hatana
+        existing_tasks = load_tasks()
+        if exclude_assigned and len(existing_tasks) > 0:
+          assigned_names = existing_tasks["Customer"].str.strip().unique()
+          target_df = target_df[~target_df[cust_col].isin(assigned_names)]
+
         party_list = target_df[cust_col].tolist()
 
         if len(party_list) > 0:
@@ -253,7 +267,7 @@ else:
               party_list[:3] if len(party_list) >= 3 else party_list
           )
           selected_parties = st.multiselect(
-              "2️⃣ Ek saath ek se zyada Parties select karein (Multi-Select):",
+              f"2️⃣ Ek saath ek se zyada Parties select karein ({len(party_list)} available):",
               options=party_list,
               default=default_selection,
           )
@@ -270,7 +284,6 @@ else:
                 "Recent_Total",
             ]].copy()
 
-            # Renaming and integer formatting (no decimals)
             preview_subset.columns = [
                 "Customer Name",
                 "Past Avg Sale (₹)",
@@ -333,24 +346,74 @@ else:
               st.success(
                   f"✅ Sabhi {len(selected_parties)} parties ke tasks successfully assign aur permanent save kar diye gaye!"
               )
+              st.rerun()
         else:
-          st.info("Is filter ke mutabiq koi party nahi mili.")
+          st.info(
+              "Is filter ke mutabiq koi nayi party nahi bachi (Sabhi parties pehle se assign ho chuki hain ya koi critical party nahi hai)."
+          )
       else:
         st.info("Pehle upar se Sales Excel file upload karein.")
 
     with admin_tab2:
-      st.subheader("📋 Operator Follow-up Tracker & Responses")
+      st.subheader("📋 Operator Follow-up Tracker & Custom Filter")
       tasks = load_tasks()
+
       if len(tasks) > 0:
-        st.table(tasks)
+        # --- DROPDOWN FILTERS FOR EVERY HEADING ---
+        st.markdown("##### 🔍 Field-wise Filters (Apni Marzi Se Filter Karein):")
+        f_col1, f_col2, f_col3 = st.columns(3)
+
+        with f_col1:
+          op_filter_list = ["ALL OPERATORS"] + sorted(
+              [op for op in tasks["Operator"].unique() if str(op).strip()]
+          )
+          chosen_op = st.selectbox("👤 Operator Filter:", op_filter_list)
+
+        with f_col2:
+          status_filter_list = ["ALL STATUS"] + sorted(
+              [s for s in tasks["Status"].unique() if str(s).strip()]
+          )
+          chosen_status = st.selectbox("📌 Status Filter:", status_filter_list)
+
+        with f_col3:
+          date_filter_list = ["ALL DATES"] + sorted(
+              [d for d in tasks["Date"].unique() if str(d).strip()],
+              reverse=True,
+          )
+          chosen_date = st.selectbox("📅 Date Filter:", date_filter_list)
+
+        search_cust = st.text_input(
+            "🏢 Customer Name Search (Optional):",
+            placeholder="Type party name...",
+        ).strip()
+
+        # Apply Filters
+        filtered_tasks = tasks.copy()
+        if chosen_op != "ALL OPERATORS":
+          filtered_tasks = filtered_tasks[filtered_tasks["Operator"] == chosen_op]
+        if chosen_status != "ALL STATUS":
+          filtered_tasks = filtered_tasks[
+              filtered_tasks["Status"] == chosen_status
+          ]
+        if chosen_date != "ALL DATES":
+          filtered_tasks = filtered_tasks[filtered_tasks["Date"] == chosen_date]
+        if search_cust:
+          filtered_tasks = filtered_tasks[
+              filtered_tasks["Customer"].str.contains(search_cust, case=False, na=False)
+          ]
+
+        st.caption(
+            f"Showing {len(filtered_tasks)} of {len(tasks)} Total Records"
+        )
+        st.table(filtered_tasks)
 
         out = io.BytesIO()
         with pd.ExcelWriter(out, engine="openpyxl") as w:
-          tasks.to_excel(w, index=False)
+          filtered_tasks.to_excel(w, index=False)
         st.download_button(
-            "📥 Download Action Tracker Excel",
+            "📥 Download Filtered Report Excel",
             out.getvalue(),
-            "sales_actions.xlsx",
+            "filtered_sales_actions.xlsx",
         )
       else:
         st.info("Abhi tak koi task assign nahi hua hai.")
